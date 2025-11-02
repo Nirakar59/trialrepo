@@ -1,36 +1,58 @@
 import { useEffect, useState, useRef } from 'react';
 import { ImageIcon, SendHorizonal, Phone, Video, Mic, MicOff, VideoOff, Maximize2, Minimize2, X, RefreshCw } from 'lucide-react';
 import useAuth from '../hooks/useAuth';
-import { useLocation, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import API from '../api/api';
 import { socket } from '../utils/socket';
 import useWebRTC from '../hooks/useWebRTC';
 import { motion, AnimatePresence } from 'framer-motion';
-import React, { Component } from 'react';
+import moment from 'moment';
 
-// ErrorBoundary Component
-class ErrorBoundary extends Component {
-  state = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error, errorInfo) {
-    console.error('ErrorBoundary caught:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="text-red-500 text-center p-5">
-          Something went wrong with the video call. Please try again.
+// Incoming Call Modal Component
+const IncomingCallModal = ({ caller, onAccept, onReject }) => (
+  <motion.div
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    exit={{ opacity: 0 }}
+    className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center"
+  >
+    <motion.div
+      initial={{ scale: 0.8, y: 50 }}
+      animate={{ scale: 1, y: 0 }}
+      className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full mx-4"
+    >
+      <div className="text-center">
+        <div className="mb-6">
+          <img
+            src={caller.profilePics || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200'}
+            alt={caller.fullname}
+            className="w-24 h-24 rounded-full mx-auto mb-4 ring-4 ring-blue-500 shadow-lg"
+          />
+          <h3 className="text-2xl font-bold text-gray-800 mb-2">
+            {caller.fullname}
+          </h3>
+          <p className="text-gray-600">Incoming video call...</p>
         </div>
-      );
-    }
-    return this.props.children;
-  }
-}
+        <div className="flex gap-4 justify-center">
+          <button
+            onClick={onReject}
+            className="flex-1 bg-red-500 text-white py-3 px-6 rounded-full hover:bg-red-600 transition flex items-center justify-center gap-2"
+          >
+            <X className="w-5 h-5" />
+            Decline
+          </button>
+          <button
+            onClick={onAccept}
+            className="flex-1 bg-green-500 text-white py-3 px-6 rounded-full hover:bg-green-600 transition flex items-center justify-center gap-2"
+          >
+            <Video className="w-5 h-5" />
+            Accept
+          </button>
+        </div>
+      </div>
+    </motion.div>
+  </motion.div>
+);
 
 // Message List Component
 const MessageList = ({ messages, user }) => {
@@ -56,7 +78,7 @@ const MessageList = ({ messages, user }) => {
               )}
               <p>{message.text}</p>
               <span className="text-xs text-gray-400 mt-1 block">
-                {new Date(message.createdAt).toLocaleTimeString()}
+                {moment(message.createdAt).fromNow()}
               </span>
             </div>
           </motion.div>
@@ -65,8 +87,6 @@ const MessageList = ({ messages, user }) => {
     </div>
   );
 };
-
-//REmoved Incoming Call Modal Component
 
 // Chat Input Component
 const ChatInput = ({ text, setText, image, setImage, sendMessage }) => (
@@ -116,6 +136,27 @@ const ChatBox = () => {
   const { user } = useAuth();
   const { userId } = useParams();
   const messageEndRef = useRef(null);
+
+  // WebRTC hook
+  const {
+    localStream,
+    remoteStreams,
+    isCallActive,
+    incomingCall,
+    callStatus,
+    isMicOn,
+    isCameraOn,
+    isFullScreen,
+    localVideoRef,
+    remoteVideoRefs,
+    startCall,
+    acceptCall,
+    rejectCall,
+    endCall,
+    toggleMic,
+    toggleCamera,
+    toggleFullScreen,
+  } = useWebRTC(user?._id, userId);
 
   // Fetch receiver data
   const fetchReceiver = async () => {
@@ -213,8 +254,6 @@ const ChatBox = () => {
     fetchMessages();
   }, [userId]);
 
-
-
   if (isLoading) {
     return <div className="flex justify-center items-center h-screen text-gray-600">Loading...</div>;
   }
@@ -236,26 +275,26 @@ const ChatBox = () => {
           alt={receiver.fullname}
           className="size-10 rounded-full"
         />
-        <div>
+        <div className="flex-1">
           <p className="font-semibold text-lg">{receiver.fullname}</p>
           <p className="text-sm text-gray-500">@{receiver.fullname}</p>
-          <div className="flex gap-3 mt-2">
-            <button
-              onClick={() => console.log('Audio call started')}
-              className="p-2 rounded-full bg-green-500 text-white hover:bg-green-600 transition"
-              aria-label="Start audio call"
-            >
-              <Phone size={20} />
-            </button>
-            <button
-              onClick={isVideoCallActive ? endVideoCall : startVideoCall}
-              className="p-2 rounded-full bg-blue-500 text-white hover:bg-blue-600 transition disabled:opacity-50"
-              aria-label={isVideoCallActive ? 'End video call' : 'Start video call'}
-              disabled={incomingCall}
-            >
-              <Video size={20} />
-            </button>
-          </div>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={() => console.log('Audio call started')}
+            className="p-2 rounded-full bg-green-500 text-white hover:bg-green-600 transition"
+            aria-label="Start audio call"
+          >
+            <Phone size={20} />
+          </button>
+          <button
+            onClick={isCallActive ? endCall : startCall}
+            className="p-2 rounded-full bg-blue-500 text-white hover:bg-blue-600 transition disabled:opacity-50"
+            aria-label={isCallActive ? 'End video call' : 'Start video call'}
+            disabled={!!incomingCall}
+          >
+            <Video size={20} />
+          </button>
         </div>
       </div>
 
@@ -272,7 +311,7 @@ const ChatBox = () => {
             {callStatus}
             {callStatus.includes('Failed') && (
               <button
-                onClick={startVideoCall}
+                onClick={startCall}
                 className="ml-2 p-1 rounded-full bg-blue-500 text-white hover:bg-blue-600 transition"
                 aria-label="Retry call"
               >
@@ -290,124 +329,94 @@ const ChatBox = () => {
             caller={receiver}
             onAccept={() => acceptCall(incomingCall)}
             onReject={() => rejectCall(incomingCall.callId)}
-            callId={incomingCall.callId}
           />
         )}
       </AnimatePresence>
 
-      {/* Local Video Element (Always Mounted) */}
-      <video
-  ref={localVideoRef}
-  autoPlay
-  muted
-  playsInline
-  className={isVideoCallActive ? "w-full md:w-64 rounded-lg shadow" : "hidden"}
-  onLoadedMetadata={() => {
-    console.log('Local video metadata loaded');
-    localVideoRef.current?.play().catch(e => console.error('Local play error:', e));
-  }}
-/>
-
-
       {/* Video Call UI */}
       <AnimatePresence>
-        {isVideoCallActive && localStream && (
-          <ErrorBoundary>
-            <motion.div
-              id="video-call-container"
-              className={`p-5 flex flex-col md:flex-row gap-4 justify-center bg-gray-100 rounded-lg shadow-lg ${
-                isFullScreen ? 'fixed inset-0 z-50' : 'relative z-10'
-              }`}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              transition={{ duration: 0.3 }}
-              onAnimationStart={() => console.log('Video call container rendered')}
-            >
-              <div className="relative">
-                <h3 className="text-sm font-medium mb-2">You</h3>
+        {isCallActive && localStream && (
+          <motion.div
+            id="video-call-container"
+            className={`p-5 flex flex-col md:flex-row gap-4 justify-center bg-gradient-to-br from-gray-900 to-gray-800 rounded-lg shadow-lg ${
+              isFullScreen ? 'fixed inset-0 z-50' : 'relative z-10'
+            }`}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            transition={{ duration: 0.3 }}
+          >
+            {/* Local Video */}
+            <div className="relative">
+              <h3 className="text-sm font-medium mb-2 text-white">You</h3>
+              <video
+                ref={localVideoRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-full md:w-64 rounded-lg shadow-lg border-2 border-blue-500"
+              />
+              {!isCameraOn && (
+                <div className="absolute inset-0 bg-gray-800 flex items-center justify-center rounded-lg">
+                  <VideoOff className="text-white" size={32} />
+                </div>
+              )}
+            </div>
+
+            {/* Remote Videos */}
+            {Object.entries(remoteStreams).map(([remoteUserId, stream]) => (
+              <div key={remoteUserId} className="relative">
+                <h3 className="text-sm font-medium mb-2 text-white">
+                  {receiver.fullname}
+                </h3>
                 <video
-                  ref={localVideoRef}
+                  ref={(el) => {
+                    if (el && !remoteVideoRefs.current[remoteUserId]) {
+                      remoteVideoRefs.current[remoteUserId] = { current: el };
+                    }
+                    if (el && stream) {
+                      el.srcObject = stream;
+                    }
+                  }}
                   autoPlay
-                  muted
                   playsInline
-                  className="w-full md:w-64 rounded-lg shadow"
-                  onError={(e) => console.error('Local video error:', e)}
-                  onCanPlay={() => console.log('Local video can play')}
+                  className="w-full md:w-64 rounded-lg shadow-lg border-2 border-green-500"
                 />
-                {!localStream && (
-                  <div className="absolute inset-0 bg-gray-800 flex items-center justify-center rounded-lg">
-                    <span className="text-white">No local video</span>
-                  </div>
-                )}
-                {localStream && localStream.getVideoTracks().length === 0 && (
-                  <div className="absolute inset-0 bg-gray-800 flex items-center justify-center rounded-lg">
-                    <VideoOff className="text-white" size={32} />
-                  </div>
-                )}
               </div>
-              {Object.entries(remoteStreams).map(([remoteUserId, stream]) => (
-  <div key={remoteUserId} className="relative">
-    <h3 className="text-sm font-medium mb-2 text-white">
-      {remoteUserId.substring(0, 8)}...
-    </h3>
-    <video
-      ref={(el) => {
-        if (el && remoteVideoRefs.current[remoteUserId]) {
-          remoteVideoRefs.current[remoteUserId].current = el;
-          if (stream && el.srcObject !== stream) {
-            el.srcObject = stream;
-            el.play().catch(e => console.error('Remote play error:', e));
-          }
-        }
-      }}
-      autoPlay
-      playsInline
-      className="w-full md:w-64 rounded-lg shadow"
-      onLoadedMetadata={(e) => {
-        console.log(`Remote video metadata loaded for ${remoteUserId}`);
-        e.target.play().catch(err => console.error('Play error:', err));
-      }}
-    />
-    {(!stream || stream.getTracks().length === 0) && (
-      <div className="absolute inset-0 bg-gray-800 flex items-center justify-center rounded-lg">
-        <span className="text-white text-sm">Connecting...</span>
-      </div>
-    )}
-  </div>
-))}
-              <div className="flex gap-2 mt-4 justify-center">
-                <button
-                  onClick={toggleMic}
-                  className={`p-2 rounded-full ${isMicOn ? 'bg-green-500' : 'bg-red-500'} text-white hover:opacity-80 transition`}
-                  aria-label={isMicOn ? 'Mute microphone' : 'Unmute microphone'}
-                >
-                  {isMicOn ? <Mic size={18} /> : <MicOff size={18} />}
-                </button>
-                <button
-                  onClick={toggleCamera}
-                  className={`p-2 rounded-full ${isCameraOn ? 'bg-green-500' : 'bg-red-500'} text-white hover:opacity-80 transition`}
-                  aria-label={isCameraOn ? 'Turn off camera' : 'Turn on camera'}
-                >
-                  {isCameraOn ? <Video size={18} /> : <VideoOff size={18} />}
-                </button>
-                <button
-                  onClick={toggleFullScreen}
-                  className="p-2 rounded-full bg-blue-500 text-white hover:bg-blue-600 transition"
-                  aria-label={isFullScreen ? 'Exit full screen' : 'Enter full screen'}
-                >
-                  {isFullScreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-                </button>
-                <button
-                  onClick={endVideoCall}
-                  className="p-2 rounded-full bg-red-500 text-white hover:bg-red-600 transition"
-                  aria-label="End call"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-            </motion.div>
-          </ErrorBoundary>
+            ))}
+
+            {/* Call Controls */}
+            <div className="absolute bottom-5 left-1/2 transform -translate-x-1/2 flex gap-3 bg-gray-800/80 backdrop-blur-md px-6 py-3 rounded-full">
+              <button
+                onClick={toggleMic}
+                className={`p-3 rounded-full ${isMicOn ? 'bg-gray-700' : 'bg-red-500'} text-white hover:opacity-80 transition`}
+                aria-label={isMicOn ? 'Mute microphone' : 'Unmute microphone'}
+              >
+                {isMicOn ? <Mic size={20} /> : <MicOff size={20} />}
+              </button>
+              <button
+                onClick={toggleCamera}
+                className={`p-3 rounded-full ${isCameraOn ? 'bg-gray-700' : 'bg-red-500'} text-white hover:opacity-80 transition`}
+                aria-label={isCameraOn ? 'Turn off camera' : 'Turn on camera'}
+              >
+                {isCameraOn ? <Video size={20} /> : <VideoOff size={20} />}
+              </button>
+              <button
+                onClick={toggleFullScreen}
+                className="p-3 rounded-full bg-gray-700 text-white hover:bg-gray-600 transition"
+                aria-label={isFullScreen ? 'Exit full screen' : 'Enter full screen'}
+              >
+                {isFullScreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
+              </button>
+              <button
+                onClick={endCall}
+                className="p-3 rounded-full bg-red-500 text-white hover:bg-red-600 transition"
+                aria-label="End call"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 
